@@ -1,34 +1,59 @@
-/**
- * Some predefined delay values (in milliseconds).
- */
-export enum Delays {
-  Short = 500,
-  Medium = 2000,
-  Long = 5000,
-}
+import axios from "axios";
+import jsdom from "jsdom";
+import {compareCollections, pause} from "./helpers/utils.js";
+import db, {Ad, Collection} from "./helpers/database.js";
+const { JSDOM } = jsdom;
 
-/**
- * Returns a Promise<string> that resolves after a given time.
- *
- * @param {string} name - A name.
- * @param {number=} [delay=Delays.Medium] - A number of milliseconds to delay resolution of the Promise.
- * @returns {Promise<string>}
- */
-function delayedHello(
-  name: string,
-  delay: number = Delays.Medium,
-): Promise<string> {
-  return new Promise((resolve: (value?: string) => void) =>
-    setTimeout(() => resolve(`Hello, ${name}`), delay),
-  );
-}
+(async () => {
 
-// Please see the comment in the .eslintrc.json file about the suppressed rule!
-// Below is an example of how to use ESLint errors suppression. You can read more
-// at https://eslint.org/docs/latest/user-guide/configuring/rules#disabling-rules
+  await pause(500)
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-export async function greeter(name: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-  // The name parameter should be of type string. Any is used only to trigger the rule.
-  return await delayedHello(name, Delays.Long);
-}
+  let html: string
+  try {
+    const resp = await axios.get('https://www.kufar.by/l/r~gomel/mobilnye-telefony?query=Iphone+11&utm_filterOrigin=Search_suggester_3&utm_queryOrigin=Manually_typed&utm_suggestionType=Category_only')
+    html = resp.data
+  } catch (e) {
+    if (axios.isAxiosError(e)) {
+      console.log(e)
+    } else console.log(e)
+  }
+
+  const dom = new JSDOM(html)
+  const document = dom.window.document
+  const items = document.querySelectorAll('[data-testid=kufar-ad]')
+  const newAds: Collection<Ad> = {}
+
+  items.forEach(node => {
+    let url = node.getAttribute('href')
+    let regexId = /item\/(\d+)\?/
+    let id = url.match(regexId)
+
+    let priceStr = node.querySelector('.styles_price__G3lbO').textContent
+    let regexPrice = /\d+/g
+    let  numbers = priceStr.match(regexPrice)
+    let price = 0
+    if (numbers) {
+      price = Number(numbers.join(''))
+    }
+    if (price === 1) price*1000
+    if (isNaN(price)) price = 0
+
+    let title = node.querySelector('.styles_title__F3uIe').textContent
+
+    newAds[id[1]] = {
+      id: id[1],
+      url: url,
+      title: title,
+      price: price
+    }
+  })
+
+  const savedAds = await db.getSavedAds()
+
+  const newIds = compareCollections(savedAds, newAds)
+
+  for (const id of newIds) {
+    await db.setNewAd(newAds[id])
+    await pause(500)
+  }
+})()
